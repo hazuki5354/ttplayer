@@ -71,14 +71,13 @@
             background: #00ffcc;
             cursor: pointer;
         }
-        /* Playlist Manager Bar styling matching Python TTPlayer headers */
         .playlist-management-bar {
             display: flex;
             background-color: #222226;
             padding: 6px;
             border-radius: 6px;
             margin-bottom: 10px;
-            gap: 6px;
+            gap: 4px;
             align-items: center;
         }
         .playlist-select {
@@ -88,24 +87,25 @@
             border: 1px solid #2d2d30;
             padding: 6px;
             border-radius: 4px;
-            font-size: 12px;
+            font-size: 11px;
             font-weight: bold;
             outline: none;
+            max-width: 110px;
         }
         .mgr-btn {
             background-color: #2d2d30;
             color: #00ffcc;
             border: none;
-            padding: 6px 10px;
+            padding: 6px 8px;
             border-radius: 4px;
             font-size: 11px;
             font-weight: bold;
             cursor: pointer;
+            white-space: nowrap;
         }
-        .mgr-btn.del {
-            color: #ff8888;
-            background-color: #3d2222;
-        }
+        .mgr-btn.ren { color: #ffffaa; }
+        .mgr-btn.del { color: #ff8888; background-color: #3d2222; }
+        
         .controls {
             display: flex;
             gap: 8px;
@@ -141,9 +141,8 @@
             font-size: 13px;
             cursor: pointer;
         }
-        #file-input {
-            display: none;
-        }
+        #file-input { display: none; }
+        
         .playlist-box {
             background-color: #08080a;
             border-radius: 8px;
@@ -165,19 +164,33 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            padding-right: 10px;
         }
         .track-item.active .track-name {
             color: #00ffcc;
             font-weight: bold;
         }
-        .del-btn {
+        .action-btn-group {
+            display: flex;
+            gap: 12px;
+            flex: none;
+            align-items: center;
+        }
+        .inline-btn {
             background: none;
-            color: #ff6666;
             border: none;
-            padding: 0 5px;
+            padding: 0;
             font-size: 14px;
             cursor: pointer;
-            flex: none;
+        }
+        .inline-btn.edit { color: #ffffaa; }
+        .inline-btn.del { color: #ff6666; }
+        
+        #status-msg {
+            font-size: 11px;
+            text-align: center;
+            color: #8a8a9a;
+            margin-top: 8px;
         }
     </style>
 </head>
@@ -185,7 +198,7 @@
 
     <div class="player-container">
         <div class="display-panel">
-            <p id="track-title">TTPlayer Mobile | Ready</p>
+            <p id="track-title">TTPlayer Mobile | Loading database...</p>
         </div>
 
         <div class="timeline-container">
@@ -195,10 +208,9 @@
         </div>
 
         <div class="playlist-management-bar">
-            <select id="playlist-select" class="playlist-select" onchange="switchPlaylist(this.value)">
-                <option value="Main List">MAIN LIST</option>
-            </select>
+            <select id="playlist-select" class="playlist-select" onchange="switchPlaylist(this.value)"></select>
             <button class="mgr-btn" onclick="createNewPlaylist()">+ NEW</button>
+            <button class="mgr-btn ren" onclick="renameCurrentPlaylist()">✏️ REN</button>
             <button class="mgr-btn del" onclick="deleteCurrentPlaylist()">✕ DEL</button>
         </div>
 
@@ -210,38 +222,91 @@
         </div>
 
         <div class="playlist-box" id="playlist"></div>
+        <div id="status-msg"></div>
     </div>
 
     <script>
-        // Store all playlists inside a master data structure object, exactly like python dictionary
-        let allPlaylists = {
-            "Main List": []
-        };
+        let db;
+        let allPlaylists = { "Main List": [] };
         let currentPlaylistName = "Main List";
         let currentIndex = -1;
         let isLooping = false;
+        let activeObjectURLs = []; // Tracks open memory links to clean them up safely
         
         const audioContext = new Audio();
         const timeline = document.getElementById('timeline');
         const timeStart = document.getElementById('time-start');
         const timeEnd = document.getElementById('time-end');
         const playlistSelect = document.getElementById('playlist-select');
+        const statusMsg = document.getElementById('status-msg');
 
+        // --- DATABASE INIT ---
+        const request = indexedDB.open("TTPlayerDB", 1);
+        request.onupgradeneeded = (e) => {
+            db = e.target.result;
+            db.createObjectStore("appData");
+        };
+        request.onsuccess = (e) => {
+            db = e.target.result;
+            loadDataFromDatabase();
+        };
+
+        function saveDataToDatabase() {
+            statusMsg.innerText = "Saving changes...";
+            const transaction = db.transaction(["appData"], "readwrite");
+            const store = transaction.objectStore("appData");
+            store.put(allPlaylists, "playlists");
+            store.put(currentPlaylistName, "currentPlaylist");
+            transaction.oncomplete = () => { statusMsg.innerText = "All changes saved locally."; };
+        }
+
+        function loadDataFromDatabase() {
+            const transaction = db.transaction(["appData"], "readonly");
+            const store = transaction.objectStore("appData");
+            
+            const reqPlaylists = store.get("playlists");
+            reqPlaylists.onsuccess = () => {
+                if (reqPlaylists.result) allPlaylists = reqPlaylists.result;
+                
+                const reqCurrent = store.get("currentPlaylist");
+                reqCurrent.onsuccess = () => {
+                    if (reqCurrent.result && allPlaylists[reqCurrent.result]) {
+                        currentPlaylistName = reqCurrent.result;
+                    }
+                    rebuildDropdownOptions(currentPlaylistName);
+                    document.getElementById('track-title').innerText = "TTPlayer Mobile | Ready";
+                    refreshPlaylistTracks();
+                };
+            };
+        }
+
+        // --- FILE HANDLING ---
         function handleFiles(files) {
+            statusMsg.innerText = "Processing files...";
+            let loadedCount = 0;
+
             for (let file of files) {
-                const objectURL = URL.createObjectURL(file);
-                allPlaylists[currentPlaylistName].push({ name: file.name, url: objectURL });
-            }
-            refreshPlaylistTracks();
-            if (currentIndex === -1 && allPlaylists[currentPlaylistName].length > 0) {
-                playTrack(0);
+                const reader = new FileReader();
+                reader.readAsArrayBuffer(file);
+                reader.onload = function(e) {
+                    const blob = new Blob([e.target.result], { type: file.type });
+                    allPlaylists[currentPlaylistName].push({ name: file.name, fileData: blob });
+                    
+                    loadedCount++;
+                    if (loadedCount === files.length) {
+                        saveDataToDatabase();
+                        refreshPlaylistTracks();
+                        if (currentIndex === -1 && allPlaylists[currentPlaylistName].length > 0) {
+                            playTrack(0);
+                        }
+                    }
+                };
             }
         }
 
         function refreshPlaylistTracks() {
             const container = document.getElementById('playlist');
             container.innerHTML = '';
-            
             let activeList = allPlaylists[currentPlaylistName] || [];
             
             activeList.forEach((track, index) => {
@@ -253,91 +318,42 @@
                 nameSpan.innerText = `${String(index + 1).padStart(2, '0')}. ${track.name}`;
                 nameSpan.onclick = () => playTrack(index);
                 
+                const btnGroup = document.createElement('div');
+                btnGroup.className = 'action-btn-group';
+
+                const editBtn = document.createElement('button');
+                editBtn.className = 'inline-btn edit';
+                editBtn.innerHTML = '✏️';
+                editBtn.onclick = (e) => { e.stopPropagation(); renameTrack(index); };
+
                 const delBtn = document.createElement('button');
-                delBtn.className = 'del-btn';
+                delBtn.className = 'inline-btn del';
                 delBtn.innerHTML = '✕';
-                delBtn.onclick = (e) => {
-                    e.stopPropagation();
-                    deleteTrack(index);
-                };
+                delBtn.onclick = (e) => { e.stopPropagation(); deleteTrack(index); };
                 
+                btnGroup.appendChild(editBtn);
+                btnGroup.appendChild(delBtn);
                 item.appendChild(nameSpan);
-                item.appendChild(delBtn);
+                item.appendChild(btnGroup);
                 container.appendChild(item);
             });
         }
 
-        function createNewPlaylist() {
-            let name = prompt("Enter new list name:");
-            if (name && name.trim()) {
-                name = name.trim();
-                if (allPlaylists[name]) {
-                    alert("A playlist with that name already exists!");
-                    return;
-                }
-                allPlaylists[name] = [];
-                
-                // Update dropdown select visual element options
-                let option = document.createElement('option');
-                option.value = name;
-                option.innerText = name.toUpperCase();
-                playlistSelect.appendChild(option);
-                
-                // Switch auto focus to the newly created list
-                playlistSelect.value = name;
-                switchPlaylist(name);
-            }
-        }
-
-        function deleteCurrentPlaylist() {
-            if (currentPlaylistName === "Main List") {
-                alert("Cannot delete the Main List!");
-                return;
-            }
-            if (confirm(`Are you sure you want to delete '${currentPlaylistName}'?`)) {
-                // Wipe playback settings context cleanly
-                audioContext.pause();
-                audioContext.src = '';
-                currentIndex = -1;
-                document.getElementById('track-title').innerText = "TTPlayer Mobile | Ready";
-                document.getElementById('play-btn').innerText = '▶ PLAY';
-                resetTimeline();
-                
-                delete allPlaylists[currentPlaylistName];
-                
-                // Rebuild picker selection elements inside dropdown window list object context
-                playlistSelect.innerHTML = '';
-                Object.keys(allPlaylists).forEach(name => {
-                    let option = document.createElement('option');
-                    option.value = name;
-                    option.innerText = name.toUpperCase();
-                    playlistSelect.appendChild(option);
-                });
-                
-                playlistSelect.value = "Main List";
-                switchPlaylist("Main List");
-            }
-        }
-
-        function switchPlaylist(name) {
-            currentPlaylistName = name;
-            // When switching visual lists, reset active playback selection tracking indices context pointers
-            audioContext.pause();
-            audioContext.src = '';
-            currentIndex = -1;
-            document.getElementById('track-title').innerText = "TTPlayer Mobile | Ready";
-            document.getElementById('play-btn').innerText = '▶ PLAY';
-            resetTimeline();
-            
-            refreshPlaylistTracks();
-        }
-
+        // --- PLAYBACK ---
         function playTrack(index) {
             let activeList = allPlaylists[currentPlaylistName] || [];
             if (index < 0 || index >= activeList.length) return;
             
             currentIndex = index;
-            audioContext.src = activeList[currentIndex].url;
+            
+            // Clean up old active object URLs to prevent phone memory leaks
+            activeObjectURLs.forEach(url => URL.revokeObjectURL(url));
+            activeObjectURLs = [];
+
+            const blobURL = URL.createObjectURL(activeList[currentIndex].fileData);
+            activeObjectURLs.push(blobURL);
+
+            audioContext.src = blobURL;
             audioContext.play().catch(() => {
                 document.getElementById('play-btn').innerText = '▶ PLAY';
             });
@@ -350,10 +366,8 @@
         function togglePlay() {
             let activeList = allPlaylists[currentPlaylistName] || [];
             if (activeList.length === 0) return;
-            if (currentIndex === -1) {
-                playTrack(0);
-                return;
-            }
+            if (currentIndex === -1) { playTrack(0); return; }
+            
             if (audioContext.paused) {
                 audioContext.play();
                 document.getElementById('play-btn').innerText = '⏸ PAUSE';
@@ -361,6 +375,101 @@
                 audioContext.pause();
                 document.getElementById('play-btn').innerText = '▶ PLAY';
             }
+        }
+
+        // --- MANAGEMENT ENGINE ---
+        function createNewPlaylist() {
+            let name = prompt("Enter new list name:");
+            if (name && name.trim()) {
+                name = name.trim();
+                if (allPlaylists[name]) { alert("A playlist with that name already exists!"); return; }
+                allPlaylists[name] = [];
+                rebuildDropdownOptions(name);
+                switchPlaylist(name);
+                saveDataToDatabase();
+            }
+        }
+
+        function renameCurrentPlaylist() {
+            if (currentPlaylistName === "Main List") { alert("Cannot rename the Main List!"); return; }
+            let oldName = currentPlaylistName;
+            let newName = prompt(`Enter new name for '${oldName}':`, oldName);
+            if (newName && newName.trim()) {
+                newName = newName.trim();
+                if (newName === oldName) return;
+                if (allPlaylists[newName]) { alert("Playlist name already exists!"); return; }
+                
+                allPlaylists[newName] = allPlaylists[oldName];
+                delete allPlaylists[oldName];
+                
+                rebuildDropdownOptions(newName);
+                currentPlaylistName = newName;
+                refreshPlaylistTracks();
+                saveDataToDatabase();
+            }
+        }
+
+        function deleteCurrentPlaylist() {
+            if (currentPlaylistName === "Main List") { alert("Cannot delete the Main List!"); return; }
+            if (confirm(`Delete '${currentPlaylistName}' permanently?`)) {
+                cleanPlaybackState();
+                delete allPlaylists[currentPlaylistName];
+                rebuildDropdownOptions("Main List");
+                switchPlaylist("Main List");
+                saveDataToDatabase();
+            }
+        }
+
+        function rebuildDropdownOptions(activeSelection) {
+            playlistSelect.innerHTML = '';
+            Object.keys(allPlaylists).forEach(name => {
+                let option = document.createElement('option');
+                option.value = name;
+                option.innerText = name.toUpperCase();
+                playlistSelect.appendChild(option);
+            });
+            playlistSelect.value = activeSelection;
+        }
+
+        function switchPlaylist(name) {
+            currentPlaylistName = name;
+            cleanPlaybackState();
+            refreshPlaylistTracks();
+            saveDataToDatabase();
+        }
+
+        function renameTrack(index) {
+            let activeList = allPlaylists[currentPlaylistName] || [];
+            let newName = prompt("Enter new title:", activeList[index].name);
+            if (newName && newName.trim()) {
+                activeList[index].name = newName.trim();
+                if (index === currentIndex) {
+                    document.getElementById('track-title').innerText = activeList[index].name;
+                }
+                refreshPlaylistTracks();
+                saveDataToDatabase();
+            }
+        }
+
+        function deleteTrack(index) {
+            let activeList = allPlaylists[currentPlaylistName] || [];
+            activeList.splice(index, 1);
+            if (index === currentIndex) {
+                cleanPlaybackState();
+            } else if (index < currentIndex) {
+                currentIndex--;
+            }
+            refreshPlaylistTracks();
+            saveDataToDatabase();
+        }
+
+        function cleanPlaybackState() {
+            audioContext.pause();
+            audioContext.src = '';
+            currentIndex = -1;
+            document.getElementById('track-title').innerText = "TTPlayer Mobile | Ready";
+            document.getElementById('play-btn').innerText = '▶ PLAY';
+            resetTimeline();
         }
 
         function toggleLoop() {
@@ -376,61 +485,29 @@
             }
         }
 
-        function deleteTrack(index) {
-            let activeList = allPlaylists[currentPlaylistName] || [];
-            activeList.splice(index, 1);
-            if (index === currentIndex) {
-                audioContext.pause();
-                audioContext.src = '';
-                currentIndex = -1;
-                document.getElementById('track-title').innerText = "TTPlayer Mobile | Ready";
-                document.getElementById('play-btn').innerText = '▶ PLAY';
-                resetTimeline();
-            } else if (index < currentIndex) {
-                currentIndex--;
-            }
-            refreshPlaylistTracks();
-        }
-
-        function seekAudio(value) {
-            if (!isNaN(audioContext.duration)) {
-                audioContext.currentTime = value;
-            }
-        }
-
+        function seekAudio(value) { if (!isNaN(audioContext.duration)) audioContext.currentTime = value; }
         function formatTime(secs) {
             if (isNaN(secs)) return "00:00";
-            let m = Math.floor(secs / 60);
-            let s = Math.floor(secs % 60);
+            let m = Math.floor(secs / 60); let s = Math.floor(secs % 60);
             return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
         }
-
-        function resetTimeline() {
-            timeline.value = 0;
-            timeStart.innerText = "00:00";
-            timeEnd.innerText = "00:00";
-        }
+        function resetTimeline() { timeline.value = 0; timeStart.innerText = "00:00"; timeEnd.innerText = "00:00"; }
 
         audioContext.onloadedmetadata = function() {
             timeline.max = audioContext.duration;
             timeEnd.innerText = formatTime(audioContext.duration);
         };
-
         audioContext.ontimeupdate = function() {
             if (!isNaN(audioContext.currentTime)) {
                 timeline.value = audioContext.currentTime;
                 timeStart.innerText = formatTime(audioContext.currentTime);
             }
         };
-
         audioContext.onended = function() {
             let activeList = allPlaylists[currentPlaylistName] || [];
             if (!isLooping) {
-                if (currentIndex + 1 < activeList.length) {
-                    playTrack(currentIndex + 1);
-                } else {
-                    playTrack(0); 
-                }
+                if (currentIndex + 1 < activeList.length) playTrack(currentIndex + 1);
+                else playTrack(0);
             }
         };
     </script>
