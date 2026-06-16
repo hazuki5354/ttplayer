@@ -391,7 +391,6 @@
         }
 
         function renameCurrentPlaylist() {
-            if (currentPlaylistName === "Main List") { alert("Cannot rename the Main List!"); return; }
             let oldName = currentPlaylistName;
             let newName = prompt(`Enter new name for '${oldName}':`, oldName);
             if (newName && newName.trim()) {
