@@ -19,30 +19,97 @@
             -webkit-user-select: none;
         }
         .player-container {
-            max-width: 400px;
+            max-width: 380px;
             margin: 40px auto 0 auto;
+            background-color: #1a1a1c;
+            padding: 15px;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
         }
         .display-panel {
             background-color: #08080a;
-            border: 1px solid #1a1a1c;
+            border: 1px solid #2d2d30;
             padding: 15px;
             border-radius: 8px;
             text-align: center;
-            margin-bottom: 15px;
+            margin-bottom: 12px;
         }
         #track-title {
             color: #00ffcc;
-            font-size: 16px;
+            font-size: 15px;
             font-weight: bold;
             margin: 0;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
         }
+        .timeline-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 15px;
+            font-family: monospace;
+            font-size: 12px;
+            color: #8a8a9a;
+        }
+        .timeline {
+            flex: 1;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 6px;
+            border-radius: 3px;
+            background: #08080a;
+            outline: none;
+        }
+        .timeline::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #00ffcc;
+            cursor: pointer;
+        }
+        /* Playlist Manager Bar styling matching Python TTPlayer headers */
+        .playlist-management-bar {
+            display: flex;
+            background-color: #222226;
+            padding: 6px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            gap: 6px;
+            align-items: center;
+        }
+        .playlist-select {
+            flex: 1;
+            background-color: #08080a;
+            color: #ffffff;
+            border: 1px solid #2d2d30;
+            padding: 6px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            outline: none;
+        }
+        .mgr-btn {
+            background-color: #2d2d30;
+            color: #00ffcc;
+            border: none;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .mgr-btn.del {
+            color: #ff8888;
+            background-color: #3d2222;
+        }
         .controls {
             display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
+            gap: 8px;
+            margin-bottom: 15px;
         }
         button {
             flex: 1;
@@ -52,12 +119,16 @@
             padding: 12px;
             border-radius: 6px;
             font-weight: bold;
-            font-size: 14px;
-            active-background: #00ffcc;
+            font-size: 13px;
+            cursor: pointer;
         }
-        button:active {
+        button:active, .mgr-btn:active {
             background-color: #00ffcc;
             color: #121216;
+        }
+        .loop-btn.active {
+            color: #00ffcc;
+            border: 1px solid #00ffcc;
         }
         .file-input-label {
             flex: 1;
@@ -67,7 +138,7 @@
             padding: 12px;
             border-radius: 6px;
             font-weight: bold;
-            font-size: 14px;
+            font-size: 13px;
             cursor: pointer;
         }
         #file-input {
@@ -76,19 +147,37 @@
         .playlist-box {
             background-color: #08080a;
             border-radius: 8px;
-            height: 300px;
+            height: 200px;
             overflow-y: auto;
-            padding: 10px;
+            padding: 5px;
         }
         .track-item {
-            padding: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
             border-bottom: 1px solid #1a1a1c;
-            font-size: 14px;
-            cursor: pointer;
+            font-size: 13px;
         }
-        .track-item.active {
+        .track-name {
+            cursor: pointer;
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .track-item.active .track-name {
             color: #00ffcc;
             font-weight: bold;
+        }
+        .del-btn {
+            background: none;
+            color: #ff6666;
+            border: none;
+            padding: 0 5px;
+            font-size: 14px;
+            cursor: pointer;
+            flex: none;
         }
     </style>
 </head>
@@ -99,59 +188,172 @@
             <p id="track-title">TTPlayer Mobile | Ready</p>
         </div>
 
+        <div class="timeline-container">
+            <span id="time-start">00:00</span>
+            <input type="range" id="timeline" class="timeline" value="0" min="0" max="100" oninput="seekAudio(this.value)">
+            <span id="time-end">00:00</span>
+        </div>
+
+        <div class="playlist-management-bar">
+            <select id="playlist-select" class="playlist-select" onchange="switchPlaylist(this.value)">
+                <option value="Main List">MAIN LIST</option>
+            </select>
+            <button class="mgr-btn" onclick="createNewPlaylist()">+ NEW</button>
+            <button class="mgr-btn del" onclick="deleteCurrentPlaylist()">✕ DEL</button>
+        </div>
+
         <div class="controls">
             <button id="play-btn" onclick="togglePlay()">▶ PLAY</button>
+            <button id="loop-btn" class="loop-btn" onclick="toggleLoop()">🔁 LOOP: OFF</button>
             <label class="file-input-label" for="file-input">+ ADD SONGS</label>
             <input type="file" id="file-input" accept="audio/*" multiple onchange="handleFiles(this.files)">
         </div>
 
-        <div class="playlist-box" id="playlist">
-            </div>
+        <div class="playlist-box" id="playlist"></div>
     </div>
 
     <script>
-        let playlist = [];
+        // Store all playlists inside a master data structure object, exactly like python dictionary
+        let allPlaylists = {
+            "Main List": []
+        };
+        let currentPlaylistName = "Main List";
         let currentIndex = -1;
-        const audioContext = new Audio();
+        let isLooping = false;
         
+        const audioContext = new Audio();
+        const timeline = document.getElementById('timeline');
+        const timeStart = document.getElementById('time-start');
+        const timeEnd = document.getElementById('time-end');
+        const playlistSelect = document.getElementById('playlist-select');
+
         function handleFiles(files) {
             for (let file of files) {
                 const objectURL = URL.createObjectURL(file);
-                playlist.push({ name: file.name, url: objectURL });
+                allPlaylists[currentPlaylistName].push({ name: file.name, url: objectURL });
             }
-            refreshPlaylist();
+            refreshPlaylistTracks();
+            if (currentIndex === -1 && allPlaylists[currentPlaylistName].length > 0) {
+                playTrack(0);
+            }
         }
 
-        function refreshPlaylist() {
+        function refreshPlaylistTracks() {
             const container = document.getElementById('playlist');
             container.innerHTML = '';
-            playlist.forEach((track, index) => {
+            
+            let activeList = allPlaylists[currentPlaylistName] || [];
+            
+            activeList.forEach((track, index) => {
                 const item = document.createElement('div');
                 item.className = 'track-item' + (index === currentIndex ? ' active' : '');
-                item.innerText = `${String(index + 1).padStart(2, '0')}. ${track.name}`;
-                item.onclick = () => playTrack(index);
+                
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'track-name';
+                nameSpan.innerText = `${String(index + 1).padStart(2, '0')}. ${track.name}`;
+                nameSpan.onclick = () => playTrack(index);
+                
+                const delBtn = document.createElement('button');
+                delBtn.className = 'del-btn';
+                delBtn.innerHTML = '✕';
+                delBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    deleteTrack(index);
+                };
+                
+                item.appendChild(nameSpan);
+                item.appendChild(delBtn);
                 container.appendChild(item);
             });
         }
 
-        function playTrack(index) {
-            if (index < 0 || index >= playlist.length) return;
-            currentIndex = index;
-            audioContext.src = playlist[currentIndex].url;
-            audioContext.play();
+        function createNewPlaylist() {
+            let name = prompt("Enter new list name:");
+            if (name && name.trim()) {
+                name = name.trim();
+                if (allPlaylists[name]) {
+                    alert("A playlist with that name already exists!");
+                    return;
+                }
+                allPlaylists[name] = [];
+                
+                // Update dropdown select visual element options
+                let option = document.createElement('option');
+                option.value = name;
+                option.innerText = name.toUpperCase();
+                playlistSelect.appendChild(option);
+                
+                // Switch auto focus to the newly created list
+                playlistSelect.value = name;
+                switchPlaylist(name);
+            }
+        }
+
+        function deleteCurrentPlaylist() {
+            if (currentPlaylistName === "Main List") {
+                alert("Cannot delete the Main List!");
+                return;
+            }
+            if (confirm(`Are you sure you want to delete '${currentPlaylistName}'?`)) {
+                // Wipe playback settings context cleanly
+                audioContext.pause();
+                audioContext.src = '';
+                currentIndex = -1;
+                document.getElementById('track-title').innerText = "TTPlayer Mobile | Ready";
+                document.getElementById('play-btn').innerText = '▶ PLAY';
+                resetTimeline();
+                
+                delete allPlaylists[currentPlaylistName];
+                
+                // Rebuild picker selection elements inside dropdown window list object context
+                playlistSelect.innerHTML = '';
+                Object.keys(allPlaylists).forEach(name => {
+                    let option = document.createElement('option');
+                    option.value = name;
+                    option.innerText = name.toUpperCase();
+                    playlistSelect.appendChild(option);
+                });
+                
+                playlistSelect.value = "Main List";
+                switchPlaylist("Main List");
+            }
+        }
+
+        function switchPlaylist(name) {
+            currentPlaylistName = name;
+            // When switching visual lists, reset active playback selection tracking indices context pointers
+            audioContext.pause();
+            audioContext.src = '';
+            currentIndex = -1;
+            document.getElementById('track-title').innerText = "TTPlayer Mobile | Ready";
+            document.getElementById('play-btn').innerText = '▶ PLAY';
+            resetTimeline();
             
-            document.getElementById('track-title').innerText = playlist[currentIndex].name;
+            refreshPlaylistTracks();
+        }
+
+        function playTrack(index) {
+            let activeList = allPlaylists[currentPlaylistName] || [];
+            if (index < 0 || index >= activeList.length) return;
+            
+            currentIndex = index;
+            audioContext.src = activeList[currentIndex].url;
+            audioContext.play().catch(() => {
+                document.getElementById('play-btn').innerText = '▶ PLAY';
+            });
+            
+            document.getElementById('track-title').innerText = activeList[currentIndex].name;
             document.getElementById('play-btn').innerText = '⏸ PAUSE';
-            refreshPlaylist();
+            refreshPlaylistTracks();
         }
 
         function togglePlay() {
-            if (playlist.length === 0) return;
+            let activeList = allPlaylists[currentPlaylistName] || [];
+            if (activeList.length === 0) return;
             if (currentIndex === -1) {
                 playTrack(0);
                 return;
             }
-            
             if (audioContext.paused) {
                 audioContext.play();
                 document.getElementById('play-btn').innerText = '⏸ PAUSE';
@@ -161,12 +363,74 @@
             }
         }
 
-        // Auto-advance track setup
-        audioContext.onended = function() {
-            if (currentIndex + 1 < playlist.length) {
-                playTrack(currentIndex + 1);
+        function toggleLoop() {
+            isLooping = !isLooping;
+            audioContext.loop = isLooping;
+            const btn = document.getElementById('loop-btn');
+            if (isLooping) {
+                btn.innerText = '🔁 LOOP: ON';
+                btn.classList.add('active');
             } else {
-                playTrack(0); // loop back to start
+                btn.innerText = '🔁 LOOP: OFF';
+                btn.classList.remove('active');
+            }
+        }
+
+        function deleteTrack(index) {
+            let activeList = allPlaylists[currentPlaylistName] || [];
+            activeList.splice(index, 1);
+            if (index === currentIndex) {
+                audioContext.pause();
+                audioContext.src = '';
+                currentIndex = -1;
+                document.getElementById('track-title').innerText = "TTPlayer Mobile | Ready";
+                document.getElementById('play-btn').innerText = '▶ PLAY';
+                resetTimeline();
+            } else if (index < currentIndex) {
+                currentIndex--;
+            }
+            refreshPlaylistTracks();
+        }
+
+        function seekAudio(value) {
+            if (!isNaN(audioContext.duration)) {
+                audioContext.currentTime = value;
+            }
+        }
+
+        function formatTime(secs) {
+            if (isNaN(secs)) return "00:00";
+            let m = Math.floor(secs / 60);
+            let s = Math.floor(secs % 60);
+            return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        }
+
+        function resetTimeline() {
+            timeline.value = 0;
+            timeStart.innerText = "00:00";
+            timeEnd.innerText = "00:00";
+        }
+
+        audioContext.onloadedmetadata = function() {
+            timeline.max = audioContext.duration;
+            timeEnd.innerText = formatTime(audioContext.duration);
+        };
+
+        audioContext.ontimeupdate = function() {
+            if (!isNaN(audioContext.currentTime)) {
+                timeline.value = audioContext.currentTime;
+                timeStart.innerText = formatTime(audioContext.currentTime);
+            }
+        };
+
+        audioContext.onended = function() {
+            let activeList = allPlaylists[currentPlaylistName] || [];
+            if (!isLooping) {
+                if (currentIndex + 1 < activeList.length) {
+                    playTrack(currentIndex + 1);
+                } else {
+                    playTrack(0); 
+                }
             }
         };
     </script>
